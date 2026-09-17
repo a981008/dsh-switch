@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# local pnpm store
+.pnpm-store/
+
+# build/test scratch
+*.log
+.DS_Store
+
+# NOTE: lib/ (built host + client bundles) is intentionally committed so the
+# plugin can be installed straight from git without a build step.
+
+# generated test bundles (test/run.mjs rebuilds them from the .ts sources)
+test/smoke.mjs
+test/integration.mjs

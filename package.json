@@ -1,0 +1,60 @@
+{
+  "name": "dsh-switch",
+  "version": "0.1.0",
+  "description": "CC Switch bridge for DeepSeek Harness: live-mirrors cc-switch providers (Claude / Codex / Gemini relays / OpenClaw) into DSH and shows each provider's quota or balance — plan windows, account balance, or a custom cc-switch usage script — in the composer and the settings card.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "test": "node test/run.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "schemastery": "^3.18.0"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.1",
+    "esbuild": "^0.28.2",
+    "react": "^18.3.1",
+    "typescript": "~5.7.2"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/a981008/dsh-switch.git"
+  },
+  "homepage": "https://github.com/a981008/dsh-switch",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cc-switch",
+    "plugin",
+    "usage",
+    "quota"
+  ]
+}
