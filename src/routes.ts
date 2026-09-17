@@ -17,7 +17,7 @@ import {
   resolveDbPath,
   withDb,
 } from './ccswitch-db.ts'
-import { dshRouteFor, readSyncState, runSync } from './sync.ts'
+import { dshRouteFor, readSyncState, runSync, type SyncDeps } from './sync.ts'
 import { queryProviderUsage, type UsageResult } from './usage.ts'
 
 /** Response body of GET /api/cc-switch/usage. */
@@ -49,6 +49,25 @@ export interface RouteDeps {
    * catalog at once instead of on the next unrelated event.
    */
   announceModelInputsChanged(): void
+}
+
+/**
+ * The one mapping from this plugin's route deps to the sync engine's deps.
+ *
+ * The sync loop and the manual `POST /sync` route MUST both go through this:
+ * the two interfaces name the settings/credentials handles differently, and
+ * handing `RouteDeps` straight to `runSync` (as the loop once did) fails at
+ * runtime with "deps.settings is not a function" — a rejected promise that a
+ * bare `.catch` swallowed, so every automatic sync silently did nothing while
+ * the manual button worked.
+ */
+export function syncDepsFrom(deps: RouteDeps): SyncDeps {
+  return {
+    dbPath: () => deps.dbPath(),
+    enabled: () => deps.enabled(),
+    settings: () => deps.settingsService(),
+    credentials: () => deps.credentialsService(),
+  }
 }
 
 /** The slice of `ctx.llm` this plugin reads (advisory provider/model catalog). */
@@ -172,8 +191,13 @@ export function makeRoutes(deps: RouteDeps): WebRoute[] {
             tokenTail: parsed !== null && parsed.apiKey.length >= 4 ? parsed.apiKey.slice(-4) : null,
             hasKey: parsed !== null && parsed.apiKey.length > 0,
             usageConfigured: parseUsageScript(row) !== null,
-            // undefined = DSH's llm service was not reachable to ask
-            ...(live === undefined ? {} : { routable: live.routable, liveModels: live.models }),
+            // When the llm service answered, every route gets an explicit
+            // verdict: live routes report their model count, the rest report
+            // routable:false so the card can say "awaiting DSH". Only an
+            // unreachable llm service leaves both fields out.
+            ...(liveRoutes === null
+              ? {}
+              : { routable: live !== undefined && live.routable, liveModels: live?.models ?? 0 }),
           }
         })
       } catch (cause) {
@@ -272,12 +296,9 @@ export function makeRoutes(deps: RouteDeps): WebRoute[] {
       if (!guard(req, res)) return
       if (!deps.enabled()) return writeJson(res, 503, { ok: false, error: 'dsh-switch is disabled in settings' })
       try {
-        const outcome = await runSync(
-          { dbPath: deps.dbPath, enabled: deps.enabled, settings: deps.settingsService, credentials: deps.credentialsService },
-          { force: true },
-        )
+        const outcome = await runSync(syncDepsFrom(deps), { force: true })
         if (outcome.changed) deps.announceModelInputsChanged()
-        writeJson(res, 200, { ok: outcome.ok, ...outcome })
+        writeJson(res, 200, { ...outcome })
       } catch (cause) {
         writeJson(res, 500, { ok: false, error: cause instanceof Error ? cause.message : String(cause) })
       }

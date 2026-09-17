@@ -65,7 +65,7 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-  const parsed = (await response.json()) as T & { error?: string }
+  const parsed = (await response.json()) as T & { ok?: boolean; error?: string }
   if (!response.ok || parsed.ok === false) throw new Error(parsed.error ?? `${url} failed: ${response.status}`)
   return parsed
 }

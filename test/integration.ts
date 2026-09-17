@@ -51,6 +51,16 @@ const PLUGIN_DB = SCRUBBED_DB
 const mod = await import('../lib/index.js')
 
 let failures = 0
+/** Poll a condition so a background sync settling cannot race the assertions. */
+async function waitFor(cond, timeoutMs = 4000) {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    try { if (cond()) return true } catch { /* keep polling */ }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return false
+}
+
 function check(name, cond, detail = '') {
   if (cond) console.log(`  ok  ${name}`)
   else {
@@ -200,7 +210,7 @@ const BROWSER_HEADERS = {
   await route('/api/cc-switch/state').handler(fakeReq({ url: '/api/cc-switch/state', headers: BROWSER_HEADERS }), res)
   const body = JSON.parse(res.body)
   const anyProvider = body.ccSwitch.providers.find((p) => p.status === 'synced')
-  check('state omits routable when DSH serves nothing', anyProvider === undefined || (anyProvider.routable === false && anyProvider.liveModels === 0), JSON.stringify(anyProvider))
+  check('state reports routable:false when DSH serves nothing', anyProvider === undefined || (anyProvider.routable === false && anyProvider.liveModels === 0), JSON.stringify(anyProvider))
   llmLive = true
 }
 
@@ -212,7 +222,14 @@ const BROWSER_HEADERS = {
 }
 
 // 3. sync through the route (mock services behind it) — mirrors every usable provider
+// The plugin's own boot sync works now (it used to reject silently), so let it
+// settle and then clear the document: this block is about what the route does.
 {
+  await waitFor(() => Object.keys(nsStore.get('llm-pi-ai')?.providers ?? {}).length > 0)
+  nsStore.clear()
+  settingsCalls.length = 0
+  credentialCalls.length = 0
+  emitted.length = 0
   const res = fakeRes()
   await route('/api/cc-switch/sync').handler(
     fakeReq({ method: 'POST', url: '/api/cc-switch/sync', headers: BROWSER_HEADERS }),
@@ -299,6 +316,84 @@ const BROWSER_HEADERS = {
 
   // disabled plugin → 503
   // (covered by the shared disable test if present; skipped here to keep the store state intact)
+}
+
+// ── automatic sync loop ──────────────────────────────────────────────────────
+// Regression: the loop used to hand its RouteDeps straight to runSync, whose
+// deps are named settings/credentials — every automatic pass then rejected with
+// "deps.settings is not a function", the rejection was swallowed by a bare
+// .catch, and only the manual POST /sync button ever wrote anything.
+{
+  const { syncDepsFrom, startSyncLoop } = mod
+
+  // The one mapping both callers must use.
+  const mapped = syncDepsFrom({
+    dbPath: () => PLUGIN_DB,
+    enabled: () => true,
+    settingsService: () => mockSettings,
+    credentialsService: () => mockCredentials,
+    llmService: () => null,
+    announceModelInputsChanged: () => {},
+  })
+  check('syncDepsFrom exposes callable sync deps', typeof mapped.settings === 'function' && typeof mapped.credentials === 'function' && mapped.settings() === mockSettings, Object.keys(mapped).join(','))
+  check('syncDepsFrom keeps dbPath/enabled', mapped.dbPath() === PLUGIN_DB && mapped.enabled() === true)
+
+  // Drive the real loop against its own DB copy and settings store.
+  const loopHome = mkdtempSync(join(tmpdir(), 'dsh-switch-loop-'))
+  const loopDb = join(loopHome, 'cc-switch.db')
+  copyFileSync(PLUGIN_DB, loopDb)
+  const loopStore = new Map()
+  const loopWrites = []
+  const loopSettings = {
+    get: (ns) => loopStore.get(ns),
+    async mutate(ns, ops) {
+      let section = { ...(loopStore.get(ns) ?? {}) }
+      for (const op of ops) {
+        const head = op.path[0]
+        const rest = op.path[1]
+        const inner = { ...(section[head] ?? {}) }
+        if (op.op === 'set') inner[rest] = op.value
+        else delete inner[rest]
+        section = { ...section, [head]: inner }
+        loopWrites.push(`${op.op} ${rest}`)
+      }
+      loopStore.set(ns, section)
+    },
+    async update(ns, patch) { loopStore.set(ns, { ...(loopStore.get(ns) ?? {}), ...patch }) },
+  }
+  const loopCredentials = { set: async () => {}, unset: async () => {}, resolve: async () => undefined }
+  const loopErrors = []
+  let announced = 0
+
+  const dispose = startSyncLoop(
+    {
+      dbPath: () => loopDb,
+      enabled: () => true,
+      settings: () => loopSettings,
+      credentials: () => loopCredentials,
+    },
+    { intervalMs: 20, announce: () => { announced += 1 }, onError: (error) => loopErrors.push(error) },
+  )
+
+  // Let the first pass land, then change cc-switch behind the loop's back.
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  check('automatic loop syncs without any manual trigger', loopWrites.length > 0, JSON.stringify(loopWrites.slice(0, 4)))
+  check('automatic loop reports no failures', loopErrors.length === 0, loopErrors.map((e) => String(e)).join(' | '))
+
+  {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(loopDb)
+    const row = db.prepare("SELECT id, app_type, name FROM providers WHERE app_type='claude' ORDER BY sort_index LIMIT 1").get()
+    db.prepare('UPDATE providers SET name = ? WHERE id = ? AND app_type = ?').run(`${row.name}·auto`, row.id, row.app_type)
+    db.close()
+  }
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const applied = Object.entries(loopStore.get('llm-pi-ai')?.providers ?? {})
+  check('automatic loop picks up a cc-switch change by itself', applied.some(([, entry]) => String(entry.displayName).endsWith('·auto')), JSON.stringify(applied.map(([route, entry]) => [route, entry.displayName])))
+  check('automatic loop announced the model-input change', announced > 0, String(announced))
+  dispose()
+  check('automatic loop still reported no failures', loopErrors.length === 0, loopErrors.map((e) => String(e)).join(' | '))
+  rmSync(loopHome, { recursive: true, force: true })
 }
 
 rmSync(tmpHome, { recursive: true, force: true })

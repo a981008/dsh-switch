@@ -28,7 +28,7 @@ dsh plugin --profile desktop add git+ssh://git@github.com/a981008/dsh-switch.git
 `lib/` (the built host + client bundles) is committed and the package declares no `prepare` script, so a git install needs no build step and pnpm never asks you to approve a build script. To rebuild after editing `src/`:
 
 ```bash
-node build.mjs && node test/run.mjs
+node build.mjs && node test/run.mjs   # run.mjs typechecks first, then runs smoke + integration
 ```
 
 Restart DSH Desktop afterwards so the next generation composes the new bundle.
@@ -106,7 +106,8 @@ dsh plugin --profile desktop remove dsh-switch
 pnpm install
 pnpm build        # 产出 lib/index.js（宿主）+ lib/client.js（浏览器，__ModuleLoader__ 包装）
 pnpm watch        # watch 模式
-pnpm test         # smoke（多类型解析/同步引擎/签名）+ integration（mock ctx 驱动全部路由）
+pnpm typecheck    # tsc --noEmit：esbuild 只剥离类型不做检查，这一步能拦住接口形状写错
+pnpm test         # 先类型检查，再跑 smoke（多类型解析/同步引擎/签名）+ integration（mock ctx 驱动全部路由与自动同步循环）
 ```
 
 可选：设置 `DSH_SWITCH_TEST_AK`/`DSH_SWITCH_TEST_SK` 环境变量可让 smoke 测试额外跑一次真实的火山方舟额度查询。

@@ -13,9 +13,16 @@
 import z from 'schemastery'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { resolveDbPath } from './ccswitch-db.ts'
-import { makeRoutes, type LlmReader, type RouteDeps } from './routes.ts'
+import { makeRoutes, syncDepsFrom, type LlmReader, type RouteDeps } from './routes.ts'
 import { mountOnce } from './mount-once.ts'
-import { runSync, watchCcSwitchDb } from './sync.ts'
+import { startSyncLoop } from './loop.ts'
+
+/**
+ * Re-exported for the test suite: the automatic loop and the route deps mapping
+ * are the two halves that must stay in agreement (see `syncDepsFrom`).
+ */
+export { syncDepsFrom } from './routes.ts'
+export { startSyncLoop } from './loop.ts'
 
 /** Settings namespace owned by this plugin. */
 export const CC_SWITCH_NAMESPACE = 'cc-switch'
@@ -120,44 +127,25 @@ function applyImpl(ctx: any, config?: Config): void {
   }, 'dsh-switch: cc-switch bridge routes')
 
   // Event-driven sync: file watching delivers cc-switch saves immediately; a
-  // slow poll remains as the safety net. Both paths share one busy-guard with
-  // a pending flag so a change landing mid-sync re-runs right after.
-  ctx.effect(() => {
-    const intervalMs = Math.min(3600, Math.max(1, Math.floor(current()?.syncInterval ?? 30))) * 1000
-    let busy = false
-    let pending = false
-    const run = (): void => {
-      if (busy) {
-        pending = true
-        return
-      }
-      if (!deps.enabled()) return
-      busy = true
-      void runSync(deps, { force: false })
-        .then((outcome) => {
-          // A sync that changed the route set (or the default model) has just
-          // changed DSH's model inputs: announce it so every connected client
-          // re-reads the model catalog immediately.
-          if (outcome.changed) deps.announceModelInputsChanged()
-        })
-        .catch(() => {
-          // failures are recorded on the sync state, never fatal
-        })
-        .finally(() => {
-          busy = false
-          if (pending) {
-            pending = false
-            run()
-          }
-        })
-    }
-    const timer = setInterval(run, intervalMs)
-    if (typeof timer.unref === 'function') timer.unref()
-    const unwatch = watchCcSwitchDb(resolveDbPath(deps.dbPath()), run)
-    run()
-    return () => {
-      clearInterval(timer)
-      unwatch()
-    }
-  }, 'dsh-switch: sync loop')
+  // slow poll remains as the safety net. The loop builds the sync engine's deps
+  // through syncDepsFrom — the one mapping the manual route also uses.
+  ctx.effect(() => startSyncLoop(syncDepsFrom(deps), {
+    intervalMs: safeIntervalMs(current),
+    announce: () => deps.announceModelInputsChanged(),
+    onError: (error) => {
+      // Never silent: a swallowed failure here is invisible in the UI.
+      ctx.logger?.error?.(error)
+    },
+  }), 'dsh-switch: sync loop')
+}
+
+/** The poll period from live settings, clamped, with a safe fallback. */
+function safeIntervalMs(current: () => Config): number {
+  try {
+    const seconds = Math.floor(Number(current()?.syncInterval ?? 30))
+    if (!Number.isFinite(seconds)) return 30_000
+    return Math.min(3600, Math.max(1, seconds)) * 1000
+  } catch {
+    return 30_000
+  }
 }
