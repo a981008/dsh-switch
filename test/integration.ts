@@ -128,10 +128,22 @@ const mockCredentials = {
   },
 }
 
+/**
+ * Stand-in for `ctx.llm`: only the first cc-switch route is "registered", so
+ * /state must report routable:true for it and routable:false for the rest.
+ */
+let llmLive = true
+const mockLlm = {
+  listProviders: () => (llmLive ? [{ id: 'ccs-29939f1e', name: '火山' }] : []),
+  listModels: async (provider: string) => (provider === 'ccs-29939f1e' ? [{ id: 'a' }, { id: 'b' }] : []),
+}
+
+const emitted: string[] = []
 const ctx = {
   webServer: { register: (route) => { registered.push(route); return () => {} } },
-  inject: (deps, cb) => { cb({ settings: mockSettings, credentials: mockCredentials }) },
+  inject: (deps, cb) => { cb({ settings: mockSettings, credentials: mockCredentials, llm: mockLlm }) },
   effect: (fn, label) => { fn(); return () => {} },
+  emit: (event) => { emitted.push(event) },
 }
 
 mod.apply(ctx, { dbPath: PLUGIN_DB })
@@ -174,6 +186,22 @@ const BROWSER_HEADERS = {
   check('state has dsh default field', body.dsh !== undefined && 'defaultModel' in body.dsh)
   check('state never leaks settings_config', !res.body.includes('ANTHROPIC_AUTH_TOKEN'))
   check('state exposes per-provider usageConfigured flag', body.ccSwitch.providers.every((p) => typeof p.usageConfigured === 'boolean'), JSON.stringify(body.ccSwitch.providers.map((p) => [p.name, p.usageConfigured])))
+  const live = body.ccSwitch.providers.find((p) => p.route === 'ccs-29939f1e')
+  const other = body.ccSwitch.providers.find((p) => p.route !== 'ccs-29939f1e' && p.status === 'synced')
+  check('state reports a route as live in DSH', live?.routable === true && live?.liveModels === 2, JSON.stringify(live))
+  check('state reports an unregistered route as not live', other === undefined || other.routable === false, JSON.stringify(other))
+  check('state lists routable routes', Array.isArray(body.dsh.routableRoutes) && body.dsh.routableRoutes.includes('ccs-29939f1e'), JSON.stringify(body.dsh.routableRoutes))
+}
+
+// 1b. llm service unreachable → the fields are omitted, never wrong
+{
+  llmLive = false
+  const res = fakeRes()
+  await route('/api/cc-switch/state').handler(fakeReq({ url: '/api/cc-switch/state', headers: BROWSER_HEADERS }), res)
+  const body = JSON.parse(res.body)
+  const anyProvider = body.ccSwitch.providers.find((p) => p.status === 'synced')
+  check('state omits routable when DSH serves nothing', anyProvider === undefined || (anyProvider.routable === false && anyProvider.liveModels === 0), JSON.stringify(anyProvider))
+  llmLive = true
 }
 
 // 2. bare curl → 403
@@ -214,6 +242,9 @@ const BROWSER_HEADERS = {
   await route('/api/cc-switch/sync').handler(fakeReq({ method: 'POST', url: '/api/cc-switch/sync', headers: BROWSER_HEADERS }), res4)
   const body4 = JSON.parse(res4.body)
   check('sync unchanged → no-op', body4.ok === true && body4.changed === false && body4.applied.length === 0, res4.body.slice(0, 200))
+  const after = emitted.length
+  check('changed sync announces model-input change', emitted.includes('llm/adapters-updated'), JSON.stringify(emitted))
+  check('unchanged sync announces nothing', after === emitted.length, JSON.stringify(emitted))
 }
 
 // ── usage route fixture ──────────────────────────────────────────────────────

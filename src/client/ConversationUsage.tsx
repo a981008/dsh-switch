@@ -8,8 +8,9 @@
  * (one fetch, no poll wait). The periodic tick only refreshes the numbers of
  * the model already in use.
  */
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { fetchUsage, type UsageResponse } from './api.ts'
+import { useSyncRevision } from './refresh.ts'
 import { en, type Dict } from './locales.ts'
 
 const REFRESH_MS = 60_000
@@ -101,46 +102,62 @@ export function ConversationUsage(props: { sessionId?: string; directory?: Direc
   // The session's chosen provider (a ccs-* route). undefined → let the host
   // resolve the default model (fresh sessions, or shells without the service).
   const route = store === undefined ? undefined : (selection?.current?.provider ?? undefined)
+  // A cc-switch sync (new provider, enabled usage query, rotated key) bumps this
+  // and re-queries at once instead of waiting for the next poll tick.
+  const syncRevision = useSyncRevision()
   const [usage, setUsage] = useState<UsageResponse | null>(null)
   const [pending, setPending] = useState(false)
   const requestSeq = useRef(0)
 
-  useEffect(() => {
+  const load = useCallback(async (options?: { silent?: boolean }): Promise<void> => {
     const seq = ++requestSeq.current
     const key = cacheKeyOf(route)
-    const cached = usageCache.get(key)
-    if (cached !== undefined && Date.now() - cached.at < CACHE_FRESH_MS) {
-      // Instant paint from the last answer; the fetch below still refreshes it.
-      setUsage(cached.value)
-      setPending(false)
-    } else {
-      // Switching models must not keep showing the previous provider's numbers.
-      setUsage(null)
-      setPending(true)
-    }
-    const load = async (): Promise<void> => {
-      try {
-        const response = await fetchUsage(route)
-        usageCache.set(key, { at: Date.now(), value: response })
-        if (requestSeq.current === seq) {
-          setUsage(response)
-          setPending(false)
-        }
-      } catch {
-        if (requestSeq.current === seq) setPending(false)
+    if (options?.silent !== true) {
+      const cached = usageCache.get(key)
+      if (cached !== undefined && Date.now() - cached.at < CACHE_FRESH_MS) {
+        // Instant paint from the last answer; the fetch below still refreshes it.
+        setUsage(cached.value)
+        setPending(false)
+      } else {
+        // Switching models must not keep showing the previous provider's numbers.
+        setUsage(null)
+        setPending(true)
       }
     }
+    try {
+      const response = await fetchUsage(route)
+      usageCache.set(key, { at: Date.now(), value: response })
+      if (requestSeq.current === seq) {
+        setUsage(response)
+        setPending(false)
+      }
+    } catch {
+      if (requestSeq.current === seq) setPending(false)
+    }
+  }, [route])
+
+  // Route change (session model switch): paint at once, then keep it fresh.
+  useEffect(() => {
     void load()
-    const timer = setInterval(() => void load(), REFRESH_MS)
+    const timer = setInterval(() => void load({ silent: true }), REFRESH_MS)
     const onVisible = (): void => {
-      if (document.visibilityState === 'visible') void load()
+      if (document.visibilityState === 'visible') void load({ silent: true })
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => {
       clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [route])
+  }, [load])
+
+  // Host model inputs changed (cc-switch sync): re-read in the background and
+  // keep the numbers already on screen until the new ones arrive.
+  const seenRevision = useRef(syncRevision)
+  useEffect(() => {
+    if (seenRevision.current === syncRevision) return
+    seenRevision.current = syncRevision
+    void load({ silent: true })
+  }, [syncRevision, load])
 
   const summary = usage === null ? null : summarize(usage, t)
   if (summary === null) {

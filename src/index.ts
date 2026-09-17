@@ -13,7 +13,7 @@
 import z from 'schemastery'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { resolveDbPath } from './ccswitch-db.ts'
-import { makeRoutes, type RouteDeps } from './routes.ts'
+import { makeRoutes, type LlmReader, type RouteDeps } from './routes.ts'
 import { mountOnce } from './mount-once.ts'
 import { runSync, watchCcSwitchDb } from './sync.ts'
 
@@ -43,6 +43,20 @@ export const Config: z<Config> = z.object({
 /** webServer is required; settings and credentials arrive via ctx.inject when ready. */
 export const inject = ['webServer']
 
+/**
+ * Tell DSH that the set of servable models changed, so every client refreshes
+ * its model catalog at once. `llm/adapters-updated` is the host event DSH
+ * forwards to clients for exactly this purpose (mode: emit, no payload);
+ * emitting it when nothing changed would only cost a redundant catalog read.
+ */
+function announceModelInputsChanged(ctx: any): void {
+  try {
+    ctx?.emit?.('llm/adapters-updated')
+  } catch {
+    // no event bus (or a listener threw): the client refresh is best-effort
+  }
+}
+
 export const apply = mountOnce('dsh-switch', applyImpl)
 
 function applyImpl(ctx: any, config?: Config): void {
@@ -52,6 +66,7 @@ function applyImpl(ctx: any, config?: Config): void {
   let current: () => Config = () => config ?? {}
   let settingsService: unknown
   let credentialsService: unknown
+  let llmService: LlmReader | null = null
   ctx.inject?.(['settings'], (settingsCtx: any) => {
     const settings = settingsCtx?.settings
     settingsService = settings
@@ -74,12 +89,20 @@ function applyImpl(ctx: any, config?: Config): void {
   ctx.inject?.(['credentials'], (credentialsCtx: any) => {
     credentialsService = credentialsCtx?.credentials
   })
+  // The DSH model registry, read-only: lets /state report whether a synced
+  // route is already live in the model picker (not just present in settings).
+  ctx.inject?.(['llm'], (llmCtx: any) => {
+    const llm = llmCtx?.llm
+    llmService = llm !== null && typeof llm === 'object' && typeof llm.listProviders === 'function' ? (llm as LlmReader) : null
+  })
 
   const deps: RouteDeps = {
     dbPath: () => current()?.dbPath ?? '',
     enabled: () => current()?.enabled ?? true,
     settingsService: () => settingsService,
     credentialsService: () => credentialsService,
+    llmService: () => llmService,
+    announceModelInputsChanged: () => announceModelInputsChanged(ctx),
   }
 
   const routes: WebRoute[] = makeRoutes(deps)
@@ -111,6 +134,12 @@ function applyImpl(ctx: any, config?: Config): void {
       if (!deps.enabled()) return
       busy = true
       void runSync(deps, { force: false })
+        .then((outcome) => {
+          // A sync that changed the route set (or the default model) has just
+          // changed DSH's model inputs: announce it so every connected client
+          // re-reads the model catalog immediately.
+          if (outcome.changed) deps.announceModelInputsChanged()
+        })
         .catch(() => {
           // failures are recorded on the sync state, never fatal
         })

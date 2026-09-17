@@ -38,6 +38,23 @@ export interface RouteDeps {
   enabled(): boolean
   settingsService(): unknown
   credentialsService(): unknown
+  /**
+   * The DSH llm service (`ctx.llm`), when the host has one. Used to report
+   * whether a synced route is already live in the DSH model list — the one
+   * thing the settings file alone cannot tell us.
+   */
+  llmService(): LlmReader | null
+  /**
+   * Announce that DSH's model inputs changed, so clients refresh their model
+   * catalog at once instead of on the next unrelated event.
+   */
+  announceModelInputsChanged(): void
+}
+
+/** The slice of `ctx.llm` this plugin reads (advisory provider/model catalog). */
+export interface LlmReader {
+  listProviders(): Array<{ id?: unknown }>
+  listModels(provider: string): Promise<Array<{ id?: unknown }>> | Array<{ id?: unknown }>
 }
 
 interface CredentialsReader {
@@ -51,6 +68,35 @@ function asCredentials(service: unknown): CredentialsReader | null {
   const candidate = service as Partial<CredentialsReader>
   if (typeof candidate.resolve !== 'function' || typeof candidate.set !== 'function' || typeof candidate.unset !== 'function') return null
   return candidate as CredentialsReader
+}
+
+/**
+ * Ask the DSH llm service which `ccs-*` routes are live and how many models it
+ * lists for each. Returns null when the service is absent or unreadable, so the
+ * settings card can distinguish "not live yet" from "cannot tell".
+ */
+async function probeLiveRoutes(llm: LlmReader | null): Promise<Map<string, { routable: boolean; models: number }> | null> {
+  if (llm === null) return null
+  let ids: string[]
+  try {
+    if (typeof llm.listProviders !== 'function') return null
+    ids = llm.listProviders().map((entry) => String((entry as { id?: unknown } | null)?.id ?? '')).filter((id) => id.startsWith('ccs-'))
+  } catch {
+    return null
+  }
+  const routes = new Map<string, { routable: boolean; models: number }>()
+  for (const id of ids) routes.set(id, { routable: true, models: 0 })
+  if (typeof llm.listModels === 'function') {
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const models = await llm.listModels(id)
+        routes.set(id, { routable: true, models: Array.isArray(models) ? models.length : 0 })
+      } catch {
+        // route registered but its catalog is unreadable: still routable
+      }
+    }))
+  }
+  return routes
 }
 
 function writeJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
@@ -91,13 +137,16 @@ export function makeRoutes(deps: RouteDeps): WebRoute[] {
   const state: WebRoute = {
     kind: 'exact',
     path: `${API_PREFIX}/state`,
-    handler: (req, res): void => {
+    handler: async (req, res): Promise<void> => {
       if (req.method !== 'GET') return writeJson(res, 405, { ok: false, error: 'method-not-allowed' })
       if (!guard(req, res)) return
       if (!deps.enabled()) return writeJson(res, 200, { ok: true, enabled: false, ccSwitch: { available: false, providers: [] }, dsh: { managedRoutes: [] } })
       const dbPath = resolveDbPath(deps.dbPath())
       const syncState = readSyncState()
       const dshModel = readDshModelState(deps.settingsService())
+      // What DSH actually serves right now: the settings file is the input, the
+      // llm registry is the output, and only the registry feeds the model picker.
+      const liveRoutes = await probeLiveRoutes(deps.llmService())
       let providers: unknown
       let available = true
       let error: string | undefined
@@ -108,6 +157,7 @@ export function makeRoutes(deps: RouteDeps): WebRoute[] {
           const outcome = parseProviderConfig(row)
           const managed = syncState.managed[route]
           const parsed = outcome.kind === 'ok' ? outcome.config : null
+          const live = liveRoutes === null ? undefined : liveRoutes.get(route)
           return {
             id: row.id,
             appType: row.appType,
@@ -122,6 +172,8 @@ export function makeRoutes(deps: RouteDeps): WebRoute[] {
             tokenTail: parsed !== null && parsed.apiKey.length >= 4 ? parsed.apiKey.slice(-4) : null,
             hasKey: parsed !== null && parsed.apiKey.length > 0,
             usageConfigured: parseUsageScript(row) !== null,
+            // undefined = DSH's llm service was not reachable to ask
+            ...(live === undefined ? {} : { routable: live.routable, liveModels: live.models }),
           }
         })
       } catch (cause) {
@@ -139,7 +191,11 @@ export function makeRoutes(deps: RouteDeps): WebRoute[] {
           lastError: syncState.lastError,
           managedRoutes: Object.keys(syncState.managed),
         },
-        dsh: { defaultModel: dshModel.defaultModel, managedRoutes: Object.keys(syncState.managed) },
+        dsh: {
+          defaultModel: dshModel.defaultModel,
+          managedRoutes: Object.keys(syncState.managed),
+          ...(liveRoutes === null ? {} : { routableRoutes: [...liveRoutes.keys()] }),
+        },
       })
     },
   }
@@ -220,6 +276,7 @@ export function makeRoutes(deps: RouteDeps): WebRoute[] {
           { dbPath: deps.dbPath, enabled: deps.enabled, settings: deps.settingsService, credentials: deps.credentialsService },
           { force: true },
         )
+        if (outcome.changed) deps.announceModelInputsChanged()
         writeJson(res, 200, { ok: outcome.ok, ...outcome })
       } catch (cause) {
         writeJson(res, 500, { ok: false, error: cause instanceof Error ? cause.message : String(cause) })

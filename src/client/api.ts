@@ -16,6 +16,10 @@ export interface ProviderView {
   hasKey: boolean
   /** true when the provider has a usage query enabled in cc-switch */
   usageConfigured: boolean
+  /** true when DSH already serves this route; absent when the host could not tell */
+  routable?: boolean
+  /** how many models DSH lists for the route (present only when routable) */
+  liveModels?: number
 }
 
 export interface StateResponse {
@@ -31,6 +35,8 @@ export interface StateResponse {
   dsh: {
     defaultModel?: { provider: string; model: string } | null
     managedRoutes?: string[]
+    /** routes DSH currently serves (absent when the host could not tell) */
+    routableRoutes?: string[]
   }
 }
 

@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, type CSSProperties } from 'react'
 import { fetchState, fetchUsage, syncNow, type StateResponse, type UsageResponse } from './api.ts'
 import { hostOf, type TFn } from './format.ts'
+import { useSyncRevision } from './refresh.ts'
 import { en, type Dict } from './locales.ts'
 
 const COLORS = {
@@ -141,6 +142,9 @@ function ProviderUsageRow(props: { route: string; t: TFn }) {
 
 export function CcSwitchSection(props: { t?: TFn }) {
   const t = props.t ?? fallbackT()
+  // Bumped by the host's model-input events: a cc-switch sync re-reads here at
+  // once instead of waiting for the section to be reopened.
+  const syncRevision = useSyncRevision()
   const [state, setState] = useState<{ status: 'loading' | 'ready'; data?: StateResponse; error?: string }>({ status: 'loading' })
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
@@ -156,7 +160,7 @@ export function CcSwitchSection(props: { t?: TFn }) {
 
   useEffect(() => {
     void loadState()
-  }, [loadState])
+  }, [loadState, syncRevision])
 
   const onSync = async (): Promise<void> => {
     setBusy(true)
@@ -224,6 +228,8 @@ export function CcSwitchSection(props: { t?: TFn }) {
                   <span style={BADGE(APP_TYPE_COLORS[provider.appType] ?? 'rgba(128,128,128,0.5)')}>{t(`appType_${provider.appType}`)}</span>
                   <strong>{provider.name}</strong>
                   {provider.isCurrent ? <span style={BADGE(COLORS.input)}>{t('current')}</span> : null}
+                  {provider.routable === true ? <span style={BADGE(COLORS.output)}>{t('liveInDsh')}</span> : null}
+                  {provider.routable === false ? <span style={BADGE(COLORS.cacheWrite)} title={t('liveInDshPendingHint')}>{t('liveInDshPending')}</span> : null}
                   <span style={{ flex: 1 }} />
                   {provider.status === 'synced' ? (
                     <span style={{ opacity: 0.6, fontSize: 12 }}>{provider.route}</span>
@@ -239,6 +245,7 @@ export function CcSwitchSection(props: { t?: TFn }) {
                 {provider.models.length > 0 ? (
                   <div style={{ opacity: 0.7, fontSize: 12, marginTop: 2 }}>
                     {t('models')}: {provider.models.join(', ')}
+                    {provider.routable === true && provider.liveModels !== undefined ? ` · ${interpolate(t, 'liveModelsInDsh', { count: provider.liveModels })}` : null}
                   </div>
                 ) : null}
                 {provider.usageConfigured ? <ProviderUsageRow route={provider.route} t={t} /> : null}

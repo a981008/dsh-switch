@@ -39,6 +39,10 @@ export const zh = {
   usageRefresh: '刷新用量',
   usageQueryFailed: '用量查询失败',
   usageCheckedAt: '查询于',
+  liveInDsh: '已在 DSH 生效',
+  liveInDshPending: '待 DSH 注册',
+  liveInDshPendingHint: '已写入 DSH 设置，但 DSH 的模型列表尚未注册该路由（下一次同步或重启后会生效）',
+  liveModelsInDsh: 'DSH 已加载 {count} 个',
 } as const
 
 export type Dict = Record<keyof typeof zh, string>
@@ -80,6 +84,10 @@ export const en: Dict = {
   usageRefresh: 'refresh usage',
   usageQueryFailed: 'usage query failed',
   usageCheckedAt: 'checked',
+  liveInDsh: 'live in DSH',
+  liveInDshPending: 'awaiting DSH',
+  liveInDshPendingHint: 'Written to DSH settings, but the DSH model list has not registered this route yet (the next sync or a restart picks it up)',
+  liveModelsInDsh: '{count} loaded in DSH',
 }
 
 export const dictionaries: Record<string, Dict> = { zh, en }

@@ -7,6 +7,7 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { CcSwitchSection } from './CcSwitchSection.tsx'
 import { ConversationUsage, type DirectoryStore } from './ConversationUsage.tsx'
+import { bumpSyncRevision } from './refresh.ts'
 import { NS, dictionaries } from './locales.ts'
 
 export const inject = ['slots', 'locale']
@@ -46,6 +47,25 @@ export function apply(ctx: ClientContext): void {
     })
   } catch {
     // older shells without the service: the badge keeps the default-model path
+  }
+
+  // Model inputs changed on the host (cc-switch sync wrote providers, a route
+  // was added or removed, a key landed) → every surface re-reads immediately.
+  // DSH forwards both events to clients; the namespaces we care about are the
+  // ones our sync writes.
+  try {
+    ctx.inject(['remote'], (scope: { remote?: { $on?: (event: string, listener: (...args: unknown[]) => void) => unknown } }) => {
+      const remote = scope?.remote
+      if (typeof remote?.$on !== 'function') return
+      remote.$on('llm/adapters-updated', () => {
+        bumpSyncRevision()
+      })
+      remote.$on('settings/document-updated', (ns?: unknown) => {
+        if (ns === 'llm-pi-ai' || ns === 'agent-default-model' || ns === undefined) bumpSyncRevision()
+      })
+    })
+  } catch {
+    // No remote event face (older shell): surfaces keep their own polling.
   }
 
   try {
