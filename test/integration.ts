@@ -396,6 +396,48 @@ const BROWSER_HEADERS = {
   rmSync(loopHome, { recursive: true, force: true })
 }
 
+// ── the file watch, not just the poll ────────────────────────────────────────
+// The poll is only a safety net; a cc-switch save should reach DSH in well under
+// a second through fs.watch. The poll period here is 5 minutes, so a write can
+// only come from the watch.
+{
+  const { startSyncLoop } = mod
+  const watchHome = mkdtempSync(join(tmpdir(), 'dsh-switch-watch-'))
+  const watchDb = join(watchHome, 'cc-switch.db')
+  copyFileSync(PLUGIN_DB, watchDb)
+  const watchStore = new Map()
+  const watchSettings = {
+    get: (ns) => watchStore.get(ns),
+    async mutate(ns, ops) {
+      let section = { ...(watchStore.get(ns) ?? {}) }
+      for (const op of ops) {
+        const inner = { ...(section[op.path[0]] ?? {}) }
+        if (op.op === 'set') inner[op.path[1]] = op.value
+        else delete inner[op.path[1]]
+        section = { ...section, [op.path[0]]: inner }
+      }
+      watchStore.set(ns, section)
+    },
+    async update(ns, patch) { watchStore.set(ns, { ...(watchStore.get(ns) ?? {}), ...patch }) },
+  }
+  const dispose = startSyncLoop(
+    { dbPath: () => watchDb, enabled: () => true, settings: () => watchSettings, credentials: () => ({ set: async () => {}, unset: async () => {}, resolve: async () => undefined }) },
+    { intervalMs: 300_000 },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  {
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(watchDb)
+    const row = db.prepare("SELECT id, app_type, name FROM providers WHERE app_type='claude' ORDER BY sort_index LIMIT 1").get()
+    db.prepare('UPDATE providers SET name = ? WHERE id = ? AND app_type = ?').run(`${row.name}·watch`, row.id, row.app_type)
+    db.close()
+  }
+  const sawWatch = await waitFor(() => Object.entries(watchStore.get('llm-pi-ai')?.providers ?? {}).some(([, entry]) => String(entry.displayName).endsWith('·watch')), 8000)
+  check('file watch picks up a cc-switch save without waiting for the poll', sawWatch, 'fs.watch did not fire within 8s')
+  dispose()
+  rmSync(watchHome, { recursive: true, force: true })
+}
+
 rmSync(tmpHome, { recursive: true, force: true })
 console.log(failures === 0 ? '\nAll integration checks passed.' : `\n${failures} integration check(s) FAILED`)
 process.exit(failures === 0 ? 0 : 1)
