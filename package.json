@@ -43,14 +43,18 @@
     "typescript": "~5.7.2"
   },
   "engines": {
-    "node": ">=22.19"
+    "node": ">=22.19",
+    "dsh": ">=0.1.5-rc.1"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/a981008/dsh-switch.git"
+    "url": "git+https://github.com/a981008/dsh-switch.git"
   },
   "homepage": "https://github.com/a981008/dsh-switch",
+  "bugs": {
+    "url": "https://github.com/a981008/dsh-switch/issues"
+  },
   "keywords": [
     "dsh",
     "deepseek-harness",

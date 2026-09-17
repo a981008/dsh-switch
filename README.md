@@ -19,8 +19,8 @@ A DeepSeek Harness (DSH) plugin that bridges [cc-switch](https://github.com/fari
 # from a clone / local checkout
 dsh plugin --profile desktop add link:/path/to/dsh-switch
 
-# or straight from this repository (pnpm builds it on install)
-dsh plugin --profile desktop add git+ssh://git@github.com/a981008/dsh-switch.git
+# or straight from this repository (no build step — lib/ is committed)
+dsh plugin --profile desktop add github:a981008/dsh-switch
 ```
 
 (or add `"dsh-switch": "link:/path/to/dsh-switch"` to the profile `package.json` dependencies + `dsh.profile.bundles`, then `pnpm install`.)
@@ -69,8 +69,8 @@ The database is opened **read-only**. Key values are never sent to the browser �
 # 本地目录
 dsh plugin --profile desktop add link:/path/to/dsh-switch
 
-# 或直接从本仓库安装（安装时由 pnpm 构建）
-dsh plugin --profile desktop add git+ssh://git@github.com:a981008/dsh-switch.git
+# 或直接从本仓库安装（无需构建 —— lib/ 已提交入库）
+dsh plugin --profile desktop add github:a981008/dsh-switch
 ```
 
 （或手动在 profile 的 `package.json` 依赖中加入 `"dsh-switch": "link:/path/to/dsh-switch"` 并加入 `dsh.profile.bundles`，然后 `pnpm install`。）
