@@ -23,6 +23,7 @@ import { startSyncLoop } from './loop.ts'
  */
 export { syncDepsFrom } from './routes.ts'
 export { startSyncLoop } from './loop.ts'
+export { runSync } from './sync.ts'
 
 /** Settings namespace owned by this plugin. */
 export const CC_SWITCH_NAMESPACE = 'cc-switch'

@@ -396,6 +396,49 @@ const BROWSER_HEADERS = {
   rmSync(loopHome, { recursive: true, force: true })
 }
 
+// ── default-model ownership ──────────────────────────────────────────────────
+// Regression: a default model pinned to something we do not own (the user's own
+// provider, or a third-party wrapper of our route such as modlens's
+// "modlens-ccs-…" twin) was silently replaced by our current cc-switch route —
+// and with our route's model, not the pinned one.
+{
+  const { runSync } = mod
+  const cases = [
+    { name: 'unset → adopts cc-switch current', before: undefined, expect: (after) => after?.provider?.startsWith('ccs-') === true },
+    { name: 'foreign provider → left alone', before: { provider: 'volces', model: 'x' }, expect: (after) => after?.provider === 'volces' && after?.model === 'x' },
+    { name: 'modlens wrapper of our route → left alone', before: { provider: 'modlens-ccs-29939f1e', model: 'deepseek-v4.1-flash' }, expect: (after) => after?.provider === 'modlens-ccs-29939f1e' && after?.model === 'deepseek-v4.1-flash' },
+    { name: 'our vanished route → repaired', before: { provider: 'ccs-gone0000', model: 'old' }, expect: (after) => after?.provider?.startsWith('ccs-') === true && after?.provider !== 'ccs-gone0000' },
+  ]
+  for (const [index, testCase] of cases.entries()) {
+    const caseHome = mkdtempSync(join(tmpdir(), `dsh-switch-default-${index}-`))
+    const caseDb = join(caseHome, 'cc-switch.db')
+    copyFileSync(PLUGIN_DB, caseDb)
+    const store = new Map()
+    if (testCase.before !== undefined) store.set('agent-default-model', testCase.before)
+    const settings = {
+      get: (ns) => store.get(ns),
+      async mutate(ns, ops) {
+        let section = { ...(store.get(ns) ?? {}) }
+        for (const op of ops) {
+          const inner = { ...(section[op.path[0]] ?? {}) }
+          if (op.op === 'set') inner[op.path[1]] = op.value
+          else delete inner[op.path[1]]
+          section = { ...section, [op.path[0]]: inner }
+        }
+        store.set(ns, section)
+      },
+      async update(ns, patch) { store.set(ns, { ...(store.get(ns) ?? {}), ...patch }) },
+    }
+    await runSync(
+      { dbPath: () => caseDb, enabled: () => true, settings: () => settings, credentials: () => ({ set: async () => {}, unset: async () => {}, resolve: async () => undefined }) },
+      { force: true },
+    )
+    const after = store.get('agent-default-model')
+    check(`default model: ${testCase.name}`, testCase.expect(after), JSON.stringify(after))
+    rmSync(caseHome, { recursive: true, force: true })
+  }
+}
+
 // ── the file watch, not just the poll ────────────────────────────────────────
 // The poll is only a safety net; a cc-switch save should reach DSH in well under
 // a second through fs.watch. The poll period here is 5 minutes, so a write can

@@ -523,9 +523,21 @@ export async function runSync(deps: SyncDeps, options: { force?: boolean } = {})
     return route === undefined ? null : plan.items.find((item) => item.route === route) ?? null
   })()
   let nextDefault: { provider: string; model: string } | null = null
-  if (pickSwitch !== null) {
+  // Ownership gate: this plugin only ever writes the default model when it is
+  // unset, or when it already points at one of OUR routes. A default pointing
+  // anywhere else — the user's own provider entry, or a third-party wrapper of
+  // our route such as modlens's `modlens-ccs-…` "(modlens vision)" twin — is a
+  // deliberate choice, and silently reverting it (worse: with a different
+  // model) on the next cc-switch edit is not ours to do.
+  const defaultProvider = typeof currentDefault.provider === 'string' ? currentDefault.provider : ''
+  const defaultIsOurs = defaultProvider.startsWith('ccs-')
+  if (!defaultIsOurs && defaultProvider !== '') {
+    // Respect the pin: no adoption, no follow, no repair.
+  } else if (pickSwitch !== null) {
     nextDefault = { provider: pickSwitch.route, model: pickSwitch.model }
-  } else if (typeof currentDefault.provider !== 'string' || !plannedRoutes.has(currentDefault.provider)) {
+  } else if (defaultProvider === '' || !plannedRoutes.has(defaultProvider)) {
+    // Unset (bootstrap) or pointing at a route of ours that cc-switch no longer
+    // has: adopt the current cc-switch provider.
     const item = fallbackItem
     if (item !== null && currentDefault.provider !== item.route) nextDefault = { provider: item.route, model: item.model }
   }
