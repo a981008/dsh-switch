@@ -24,7 +24,7 @@ dsh plugin --profile desktop add git+ssh://git@github.com/a981008/dsh-switch.git
 
 (or add `"dsh-switch": "link:/path/to/dsh-switch"` to the profile `package.json` dependencies + `dsh.profile.bundles`, then `pnpm install`.)
 
-`lib/` (the built host + client bundles) is committed, so a git install needs no build step. To rebuild after editing `src/`:
+`lib/` (the built host + client bundles) is committed and the package declares no `prepare` script, so a git install needs no build step and pnpm never asks you to approve a build script. To rebuild after editing `src/`:
 
 ```bash
 node build.mjs && node test/run.mjs
@@ -73,7 +73,7 @@ dsh plugin --profile desktop add git+ssh://git@github.com:a981008/dsh-switch.git
 
 （或手动在 profile 的 `package.json` 依赖中加入 `"dsh-switch": "link:/path/to/dsh-switch"` 并加入 `dsh.profile.bundles`，然后 `pnpm install`。）
 
-`lib/`（构建后的宿主端与客户端 bundle）已提交入库，从 git 安装无需额外构建。修改 `src/` 后重新构建：
+`lib/`（构建后的宿主端与客户端 bundle）已提交入库，且包内没有 `prepare` 脚本 —— 从 git 安装无需额外构建，pnpm 也不会要求你审批构建脚本。修改 `src/` 后重新构建：
 
 ```bash
 node build.mjs && node test/run.mjs
