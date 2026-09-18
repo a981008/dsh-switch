@@ -1,7 +1,7 @@
 /**
  * Test runner: typechecks the sources, then bundles the smoke + integration
  * tests with esbuild and runs them on the current Node runtime (any Node >=
- * 22.19 with node:sqlite).
+ * 24 with node:sqlite).
  *
  * The typecheck is not decoration: esbuild strips types without checking them,
  * and a wrong-shaped dependency object handed to the sync engine once shipped
