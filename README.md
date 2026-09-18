@@ -33,6 +33,8 @@ node build.mjs && node test/run.mjs   # run.mjs typechecks first, then runs smok
 
 Restart DSH Desktop afterwards so the next generation composes the new bundle.
 
+Agent-oriented contributor guide: [AGENTS.md](AGENTS.md) — commands, architecture map, hard invariants, debugging paths, and the testing conventions. Coding agents should read it before the first edit (Claude-family tools are pointed there by [CLAUDE.md](CLAUDE.md)).
+
 ### Uninstall / recovery
 
 ```bash
@@ -82,6 +84,8 @@ node build.mjs && node test/run.mjs
 ```
 
 安装后需重启 DSH Desktop，下一个 generation 才会组合新 bundle。
+
+面向 coding agent 的贡献者指南见 [AGENTS.md](AGENTS.md) —— 构建与测试命令、架构与数据流、硬性不变量、调试路径与测试约定都在里面（Claude 系工具经 [CLAUDE.md](CLAUDE.md) 指向它）。改代码前请先读它。
 
 ### 卸载 / 恢复
 
